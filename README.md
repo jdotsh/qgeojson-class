@@ -11,17 +11,17 @@ The exporter accepts a QVariantMap with the same structure.
 This QVariantMap always has at least one (key, value) pair.
 
 **7 Geometry Object Types:**
- 1.“Point”
- 2.“MultiPoint” 
- 3.“LineString”
- 4.“MultiLineString”
- 5.“Polygon”
- 6.“MultiPolygon”
- 7.“GeometryCollection”
+ - “Point”
+ - “MultiPoint” 
+ - “LineString”
+ - “MultiLineString”
+ - “Polygon”
+ - “MultiPolygon”
+ - “GeometryCollection”
 
 **2 Non-Geometry GeoJSON Object Types:**
- 8.“Feature”
- 9.“FeatureCollection”
+ - “Feature”
+ - “FeatureCollection”
 
 **Key/Value of the Map**
 - The key is QString containing one of the 9 GeoJson object types above described
