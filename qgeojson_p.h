@@ -40,25 +40,35 @@
 #ifndef QGEOJSON_H
 #define QGEOJSON_H
 
-#include <QtPositioning/qgeocoordinate.h>
-#include <QtPositioning/qgeocircle.h>
-#include <QtPositioning/qgeopath.h>
-#include <QtPositioning/qgeopolygon.h>
-#include <qjsondocument.h>
-#include <qjsonobject.h>
-#include <qjsonvalue.h>
-#include <qjsonarray.h>
-#include <qvariant.h>
+#include <QtCore/qvariant.h>
+#include <QtCore/qjsondocument.h>
 
+//
+//  W A R N I N G
+//  -------------
+//
+// This file is not part of the Qt API.  It exists purely as an
+// implementation detail.  This header file may change from version to
+// version without notice, or even be removed.
+//
+// We mean it.
+//
 QT_BEGIN_NAMESPACE
 
 class QGeoJson
 {
 
 public:
+    QGeoJson();
+    ~QGeoJson();
 
-    static QVariantMap importGeoJson(const QJsonDocument &geojsonDoc);    // importer public method
-    static QJsonDocument exportGeoJson(const QVariantMap &geojsonMap);    // exporter public method
+    // importer public method
+    static QVariantMap importGeoJson(const QJsonDocument &geojsonDoc);
+
+    // exporter public method
+    static QJsonDocument exportGeoJson(const QVariantMap &geojsonMap);
 };
+
+QT_END_NAMESPACE
 
 #endif // QGEOJSON_H

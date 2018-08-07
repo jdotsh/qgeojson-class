@@ -1,4 +1,13 @@
-#include "qgeojson.h"
+#include "qgeojson_p.h"
+#include <qjsonobject.h>
+#include <qjsonvalue.h>
+#include <qjsonarray.h>
+#include <qgeocoordinate.h>
+#include <qgeocircle.h>
+#include <qgeopath.h>
+#include <qgeopolygon.h>
+#include <qdebug.h>
+QT_BEGIN_NAMESPACE
 
 /*! \class QGeoJson
     \inmodule Qt.labs.location
@@ -70,49 +79,65 @@
     using GeoJson::importGeoJson().
 
     Validity of the parsed document can be queried with !isNull() or using external API's.
-
-static QGeoCircle importPoint(const QVariantMap &point);
-static QGeoPath importLineString(const QVariantMap &lineString);
-static QGeoPolygon importPolygon(const QVariantMap &polygon);
-
-static QVariantList importMultiPoint(const QVariantMap &multiPoint); //TODO: change the returned value to QVariantList
-static QVariantList importMultiLineString(const QVariantMap &multiLineString);
-static QVariantList importMultiPolygon(const QVariantMap &multiPolygon);
-
-static QVariantList importGeometryCollection(const QVariantMap &geometryCollection);
-static QVariantMap importFeature(const QVariantMap &feature);
-static QVariantList importFeatureCollection(const QVariantMap &featureCollection);
-
-static QGeoCoordinate importPointCoordinates(const QVariant &obtainedCoordinates); // converts a single position
-static QList<QGeoCoordinate> importLineStringCoordinates(const QVariant &obtainedCoordinates); // converts an array of positions
-static QList<QList<QGeoCoordinate>> importPolygonCoordinates(const QVariant &obtainedCoordinates); // converts an array of array of positions
-static QVariantMap importGeometry(const QVariantMap &geometryMap);
-
-static QJsonObject exportPoint(const QVariantMap &point); // generates a QJsonObject from a QVariantMap with a key/value: "Point"/QGeoCircle
-static QJsonObject exportLineString(const QVariantMap &lineString);
-static QJsonObject exportPolygon(const QVariantMap &polygon);
-
-static QJsonObject exportMultiPoint(const QVariantMap &multiPoint);
-static QJsonObject exportMultiLineString(const QVariantMap &multiLineString);
-static QJsonObject exportMultiPolygon(const QVariantMap &multiPolygon);
-
-static QJsonValue exportPointCoordinates(const QGeoCoordinate &obtainedCoordinates);
-static QJsonValue exportLineStringCoordinates(const QList <QGeoCoordinate> &obtainedCoordinatesList);
-static QJsonValue exportPolygonCoordinates(const QList<QList<QGeoCoordinate>> &obtainedCoordinates);
-static QJsonObject exportGeometry(const QVariantMap &geometryMap);
-
-static QJsonObject exportFeature(const QVariantMap &feature);
-static QJsonObject exportGeometryCollection(const QVariantMap &geometryCollection);
-static QJsonObject exportFeatureCollection(const QVariantMap &featureCollection);
 */
 
-/*!
-    \internal
- */
-QGeoCircle QGeoJson::importPoint(const QVariantMap &pointMap)
+static QGeoCoordinate importPointCoordinates(const QVariant &obtainedCoordinates)
 {
-    const QString keyCoord = "coordinates";
+    QGeoCoordinate parsedCoordinates;
+    QVariantList list = obtainedCoordinates.value<QVariantList>();
+
+    QVariantList::iterator iter; // iterating Point coordinates arrays
+    int i = 0;
+    for (iter = list.begin(); iter != list.end(); ++iter) {
+        QString elementType;
+        elementType.fromUtf8(iter->typeName()); // Not working with QStringLiteral
+        switch (i) {
+        case 0:
+            parsedCoordinates.setLatitude(iter->toDouble());
+            break;
+        case 1:
+            parsedCoordinates.setLongitude(iter->toDouble());
+            break;
+        case 2:
+            parsedCoordinates.setAltitude(iter->toDouble());
+            break;}
+        i++;
+    }
+    return parsedCoordinates;
+}
+
+static QList<QGeoCoordinate> importLineStringCoordinates(const QVariant &obtainedCoordinates)
+{
+    QList <QGeoCoordinate> parsedCoordinatesLine;
+    QVariantList list2 = obtainedCoordinates.value<QVariantList>();
+    QGeoCoordinate pointForLine;
+
+    QVariantList::iterator iter; // iterating the LineString coordinates nasted arrays
+    for (iter = list2.begin(); iter != list2.end(); ++iter) {
+        pointForLine = importPointCoordinates(*iter);
+        parsedCoordinatesLine.append(pointForLine); // populating the QList of coordinates
+    }
+    return parsedCoordinatesLine;
+}
+
+static QList<QList<QGeoCoordinate>> importPolygonCoordinates(const QVariant &obtainedCoordinates)
+{
+    QList<QList<QGeoCoordinate>> parsedCoordinatesPoly;
+    QVariantList obtainedCoordinatesList = obtainedCoordinates.value<QVariantList>();
+
+    QList<QGeoCoordinate> coordinatesList; // iterating the Polygon coordinates nasted arrays
+    for (const QVariant &coordinatesVariant: obtainedCoordinatesList) {
+        coordinatesList = importLineStringCoordinates(coordinatesVariant);
+        parsedCoordinatesPoly << coordinatesList;
+    }
+    return parsedCoordinatesPoly;
+}
+
+static QGeoCircle importPoint(const QVariantMap &pointMap)
+{
     QGeoCircle parsedPoint;
+
+    QString keyCoord = QStringLiteral("coordinates");
 
     QGeoCoordinate center;
     QVariant valueCoords = pointMap.value(keyCoord); // returns the value associated with the key coordinates (Point)
@@ -121,13 +146,11 @@ QGeoCircle QGeoJson::importPoint(const QVariantMap &pointMap)
     return parsedPoint;
 }
 
-/*!
-    \internal
- */
-QGeoPath  QGeoJson::importLineString(const QVariantMap &lineMap)
+static QGeoPath importLineString(const QVariantMap &lineMap)
 {
-    const QString keyCoord = "coordinates";
     QGeoPath parsedLineString;
+
+    QString keyCoord = QStringLiteral("coordinates");
 
     QList <QGeoCoordinate> coordinatesList;
     QVariant valueCoordinates = lineMap.value(keyCoord); // returns the value associated with the key coordinates (LineString)
@@ -136,19 +159,19 @@ QGeoPath  QGeoJson::importLineString(const QVariantMap &lineMap)
     return parsedLineString;
 }
 
-/*!
-    \internal
- */
-QGeoPolygon QGeoJson::importPolygon(const QVariantMap &polyMap)
+static QGeoPolygon importPolygon(const QVariantMap &polyMap)
 {
-    int i = 0; // meant to bypass the lack of iterator position tracking
-    const QString keyCoord = "coordinates";
     QGeoPolygon parsedPolygon;
+
+    int i = 0; // meant to bypass the lack of iterator position tracking
+
+    QString keyCoord = QStringLiteral("coordinates");
 
     QList<QList<QGeoCoordinate>> perimeters;
     QList<QList<QGeoCoordinate>> ::iterator iter;
     QVariant valueCoordinates = polyMap.value(keyCoord); // returns the value associated with the key coordinates (Polygon)
     perimeters = importPolygonCoordinates(valueCoordinates); // import an array of QList<QGeocoordinates>
+
     for (iter = perimeters.begin(); iter != perimeters.end(); ++iter) {
         if (i == 0)
             parsedPolygon.setPath(*iter); // external perimeter
@@ -159,13 +182,11 @@ QGeoPolygon QGeoJson::importPolygon(const QVariantMap &polyMap)
     return parsedPolygon;
 }
 
-/*!
-    \internal
- */
-QVariantList QGeoJson::importMultiPoint(const QVariantMap &multiPointMap)
+static QVariantList importMultiPoint(const QVariantMap &multiPointMap)
 {
-    const QString keyCoord = "coordinates";
     QVariantList parsedMultiPoint;
+
+    QString keyCoord = QStringLiteral("coordinates");
 
     QGeoCircle parsedPoint;
     QGeoCoordinate coordinatesCenter;
@@ -181,16 +202,15 @@ QVariantList QGeoJson::importMultiPoint(const QVariantMap &multiPointMap)
     return parsedMultiPoint;
 }
 
-/*!
-    \internal
- */
-QVariantList QGeoJson::importMultiLineString(const QVariantMap &multiLineStringMap)
+static QVariantList importMultiLineString(const QVariantMap &multiLineStringMap)
 {
-    QGeoPath parsedLineString;
     QVariantList parsedMultiLineString;
-
     QList <QGeoCoordinate> coordinatesList;
-    QString keyCoord = "coordinates";
+    QGeoPath parsedLineString;
+
+    QString keyCoord = QStringLiteral("coordinates");
+
+
     QVariant listCoords = multiLineStringMap.value(keyCoord);
     QVariantList list = listCoords.value<QVariantList>();
 
@@ -203,13 +223,10 @@ QVariantList QGeoJson::importMultiLineString(const QVariantMap &multiLineStringM
     return parsedMultiLineString;
 }
 
-/*!
-    \internal
- */
-QVariantList QGeoJson::importMultiPolygon(const QVariantMap &multiPolyMap)
+static QVariantList importMultiPolygon(const QVariantMap &multiPolyMap)
 {
-    const QString keyCoord = "coordinates";
     QVariantList parsedMultiPoly;
+    QString keyCoord = QStringLiteral("coordinates");
 
     QList<QList<QGeoCoordinate>> coordinatesList;
     QList<QList<QGeoCoordinate>>::iterator iter;
@@ -230,73 +247,14 @@ QVariantList QGeoJson::importMultiPolygon(const QVariantMap &multiPolyMap)
     return parsedMultiPoly;
 }
 
-/*!
-    \internal
- */
-QGeoCoordinate QGeoJson::importPointCoordinates(const QVariant &obtainedCoordinates)
-{
-    QGeoCoordinate parsedCoordinates;
-    QVariantList list = obtainedCoordinates.value<QVariantList>();
+static QVariantMap importGeometry(const QVariantMap &geometryMap);
 
-    QVariantList::iterator iter; // iterating Point coordinates arrays
-    int i = 0;
-    for (iter = list.begin(); iter != list.end(); ++iter) {
-        QString elementType = iter->typeName();
-        switch (i) {
-        case 0:
-            parsedCoordinates.setLatitude(iter->toDouble());
-            break;
-        case 1:
-            parsedCoordinates.setLongitude(iter->toDouble());
-            break;
-        case 2:
-            parsedCoordinates.setAltitude(iter->toDouble());
-            break;}
-        i++;
-    }
-    return parsedCoordinates;
-}
-
-/*!
-    \internal
- */
-QList <QGeoCoordinate> QGeoJson::importLineStringCoordinates(const QVariant &obtainedCoordinates)
-{
-    QList <QGeoCoordinate> parsedCoordinatesLine;
-    QVariantList list2 = obtainedCoordinates.value<QVariantList>();
-    QGeoCoordinate pointForLine;
-
-    QVariantList::iterator iter; // iterating the LineString coordinates nasted arrays
-    for (iter = list2.begin(); iter != list2.end(); ++iter) {
-        pointForLine = importPointCoordinates(*iter); // using importPointCoordinates method to convert multi positions from QVariant containing QVariantList
-        parsedCoordinatesLine.append(pointForLine); // populating the QList of coordinates
-    }
-    return parsedCoordinatesLine;
-}
-
-/*!
-    \internal
- */
-QList<QList<QGeoCoordinate>> QGeoJson::importPolygonCoordinates(const QVariant &obtainedCoordinates)
-{
-    QList<QList<QGeoCoordinate>> parsedCoordinatesPoly;
-    QVariantList obtainedCoordinatesList = obtainedCoordinates.value<QVariantList>(); // extracting the QVariantList
-
-    QList<QGeoCoordinate> coordinatesList; // iterating the Polygon coordinates nasted arrays
-    for (const QVariant &coordinatesVariant: obtainedCoordinatesList) {
-        coordinatesList = importLineStringCoordinates(coordinatesVariant);
-        parsedCoordinatesPoly << coordinatesList;
-    }
-    return parsedCoordinatesPoly;
-}
-
-/*!
-    \internal
- */
-QVariantList QGeoJson::importGeometryCollection(const QVariantMap &geometryCollection)
+static QVariantList importGeometryCollection(const QVariantMap &geometryCollection)
 {
     QVariantList parsedGeoCollection;
-    QVariant listGeometries = geometryCollection.value("geometries");
+
+    QString keyGeometries = QStringLiteral("geometries");
+    QVariant listGeometries = geometryCollection.value(keyGeometries);
     QVariantList list = listGeometries.value<QVariantList>();
 
     QVariantList::iterator iterGeometries;
@@ -308,64 +266,17 @@ QVariantList QGeoJson::importGeometryCollection(const QVariantMap &geometryColle
     return parsedGeoCollection;
 }
 
-/*!
-    \internal
- */
-QVariantMap QGeoJson::importFeature(const QVariantMap &feature)
-{
-    QVariantMap parsedFeature;
-    QVariant featureGeometry = feature.value("geometry"); // extracting GeoJson "geometry" member from the QVariantMap
-    QVariantMap mapGeometry = featureGeometry.value<QVariantMap>();
-    QVariantMap geoMap = importGeometry(mapGeometry);
-
-    QVariant elementValue = QVariant::fromValue(geoMap);
-    QString elementKey = "geometry";
-    parsedFeature.insert(elementKey, elementValue);
-
-    elementValue = feature.value("properties");  // extracting GeoJson "properties" member from the QVariantMap
-    elementKey = "properties";
-    parsedFeature.insert(elementKey, elementValue);
-
-    elementValue = feature.value("id"); // extracting GeoJson "id" member from the QVariantMap
-    if (elementValue != QVariant::Invalid) {
-        elementKey = "id";
-        parsedFeature.insert(elementKey, elementValue);
-    }
-    return parsedFeature;
-}
-
-/*!
-    \internal
- */
-QVariantList QGeoJson::importFeatureCollection(const QVariantMap &featureCollection)
-{
-    QVariantList parsedFeatureCollection;
-    QVariant featureVariant = featureCollection.value("features");
-    QVariantList featureVariantList = featureVariant.value<QVariantList>();
-
-    QVariantMap importedMap;
-    for (const QVariant &singleVariantFeature: featureVariantList) {
-        QVariantMap featureMap = singleVariantFeature.value<QVariantMap>();
-        QVariantMap featMap = importFeature(featureMap);
-        importedMap.insert("Feature",featMap);
-        parsedFeatureCollection.append(importedMap);
-    }
-    return parsedFeatureCollection;
-}
-
-/*!
-    \internal
- */
-QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
+static QVariantMap importGeometry(const QVariantMap &geometryMap)
 {
     QVariantMap parsedGeoJsonMap;
     QString geometryTypes[] = {
-        "Point",
-        "MultiPoint",
-        "LineString",
-        "MultiLineString",
-        "Polygon",
-        "MultiPolygon","GeometryCollection"
+        QStringLiteral("Point"),
+        QStringLiteral("MultiPoint"),
+        QStringLiteral("LineString"),
+        QStringLiteral("MultiLineString"),
+        QStringLiteral("Polygon"),
+        QStringLiteral("MultiPolygon"),
+        QStringLiteral("GeometryCollection")
     };
 
     enum geoTypeSwitch {
@@ -378,9 +289,9 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
         GeometryCollection
     };
 
-    const QString geoKey = geoKey.toString();
-    const QString keyGeometries = "geometries";
-    QVariant geoValue = geometryMap.value("type");
+    const QString geoKey;
+    const QString keyGeometries = QStringLiteral("geometries");
+    QVariant geoValue = geometryMap.value(QStringLiteral("type"));
 
     int len = sizeof(geometryTypes)/sizeof(*geometryTypes);
     int i = 0;
@@ -393,7 +304,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     switch (i) {
     case Point:
     {
-        const QString geoKey = "Point";
+        const QString geoKey = QStringLiteral("Point");
         QGeoCircle circle = importPoint(geometryMap);
         QVariant geoValue = QVariant::fromValue(circle);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -401,7 +312,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case MultiPoint:
     {
-        const QString geoKey = "MultiPoint"; // creating the key for the first element of the QVariantMap that will be returned
+        const QString geoKey = QStringLiteral("MultiPoint"); // creating the key for the first element of the QVariantMap that will be returned
         QVariantList multiCircle = importMultiPoint(geometryMap);
         QVariant geoValue = QVariant::fromValue(multiCircle); // wraps up the multiCircle item in a QVariant
         parsedGeoJsonMap.insert(geoKey, geoValue); // creating the QVariantMap element
@@ -409,7 +320,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case LineString:
     {
-        const QString geoKey = "LineString";
+        const QString geoKey = QStringLiteral("LineString");
         QGeoPath lineString = importLineString(geometryMap);
         QVariant geoValue = QVariant::fromValue(lineString);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -417,7 +328,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case MultiLineString:
     {
-        const QString geoKey = "MultiLineString";
+        const QString geoKey = QStringLiteral("MultiLineString");
         QVariantList multiLineString = importMultiLineString(geometryMap);
         QVariant geoValue = QVariant::fromValue(multiLineString);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -425,7 +336,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case Polygon:
     {
-        const QString geoKey = "Polygon";
+        const QString geoKey = QStringLiteral("Polygon");
         QGeoPolygon poly = importPolygon(geometryMap);
         QVariant geoValue = QVariant::fromValue(poly);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -433,7 +344,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case MultiPolygon:
     {
-        const QString geoKey = "MultiPolygon";
+        const QString geoKey = QStringLiteral("MultiPolygon");
         QVariantList multiPoly = importMultiPolygon(geometryMap);
         QVariant geoValue = QVariant::fromValue(multiPoly);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -441,7 +352,7 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     }
     case GeometryCollection: // list of GeoJson geometry objects
     {
-        const QString geoKey = "GeometryCollection";
+        const QString geoKey = QStringLiteral("GeometryCollection");
         QVariantList multigeo = importGeometryCollection(geometryMap);
         QVariant geoValue = QVariant::fromValue(multigeo);
         parsedGeoJsonMap.insert(geoKey, geoValue);
@@ -451,181 +362,49 @@ QVariantMap QGeoJson::importGeometry(const QVariantMap &geometryMap)
     return parsedGeoJsonMap;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportPoint(const QVariantMap &pointMap)
+static QVariantMap importFeature(const QVariantMap &feature)
 {
-    const QString keyType = "type";
-    const QString keyCoord = "coordinates";
+    QVariantMap parsedFeature;
+    QString key = QStringLiteral("geometry");
+    QVariant featureGeometry = feature.value(key); // Importing GeoJson "geometry" member from the QVariantMap
 
-    QJsonObject parsedPoint;
-    QJsonValue type = "Point";
+    QVariantMap mapGeometry = featureGeometry.value<QVariantMap>();
+    QVariantMap geoMap = importGeometry(mapGeometry);
 
-    QVariant geoCircle = pointMap.value(type.toString()); // exporting the value of "Point" QVariantMap node in a QVariant
-    QGeoCircle circle = geoCircle.value<QGeoCircle>();
-    QGeoCoordinate center = circle.center();
+    QVariant variantValue = QVariant::fromValue(geoMap);
+    parsedFeature.insert(key, variantValue);
 
-    parsedPoint.insert(keyType,type);
-    parsedPoint.insert(keyCoord, exportPointCoordinates(center));
-    return parsedPoint;
-}
+    variantValue = feature.value(QStringLiteral("properties"));  // Importing GeoJson "properties" member from the QVariantMap
+    key = QStringLiteral("properties");
+    parsedFeature.insert(key, variantValue);
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportLineString(const QVariantMap &lineStringMap)
-{
-    const QString keyType = "type";
-    const QString keyLineString = "coordinates";
-
-    QJsonObject parsedMultiPoint;
-
-    QJsonValue lineCoordinates;
-    QJsonValue typeValue = "LineString";
-
-    QList <QGeoCoordinate> lineCoordinatesList;
-    QVariant pathVariant = lineStringMap.value(typeValue.toString());
-
-    QGeoPath parsedPath;
-    parsedPath = pathVariant.value<QGeoPath>();
-
-    lineCoordinatesList = parsedPath.path();
-    lineCoordinates = exportLineStringCoordinates(lineCoordinatesList);
-
-    parsedMultiPoint.insert(keyType, typeValue);
-    parsedMultiPoint.insert(keyLineString, lineCoordinates);
-    return parsedMultiPoint;
-}
-
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportPolygon(const QVariantMap &polygonMap)
-{
-    const QString keyType = "type";
-    const QString keyCoord = "coordinates";
-
-    QJsonObject parsedPolygon;
-
-    QGeoPolygon parsedPoly;
-
-    QJsonValue typeValue = "Polygon";
-    QJsonValue polyCoordinates;
-
-    QList<QList<QGeoCoordinate>> obtainedCoordinatesPoly;
-    QVariant polygonVariant = polygonMap.value(typeValue.toString());
-
-    parsedPoly = polygonVariant.value<QGeoPolygon>();
-    obtainedCoordinatesPoly << parsedPoly.path();
-
-    if (parsedPoly.holesCount()!=0)
-        for (int i = 0; i<parsedPoly.holesCount(); i++) {
-            obtainedCoordinatesPoly << parsedPoly.holePath(i);
-        }
-    polyCoordinates = exportPolygonCoordinates(obtainedCoordinatesPoly);
-
-    parsedPolygon.insert(keyType, typeValue);
-    parsedPolygon.insert(keyCoord, polyCoordinates);
-    return parsedPolygon;
-}
-
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportMultiPoint(const QVariantMap &multiPointMap)
-{
-    const QString keyType = "type";
-    const QString keyCoord = "coordinates";
-
-    QJsonObject parsedMultiPoint;
-
-    QJsonValue typeValue = "MultiPoint";
-    QJsonValue singlePosition;
-    QJsonValue multiPosition;
-
-    QList <QGeoCoordinate> obtainedCoordinatesMP;
-    QVariant multiCircleVariant = multiPointMap.value(typeValue.toString());
-    QVariantList multiCircleVariantList = multiCircleVariant.value<QVariantList>();
-
-    for (const QVariant &exCircle: multiCircleVariantList) {
-        obtainedCoordinatesMP << exCircle.value<QGeoCircle>().center();
+    variantValue = feature.value(QStringLiteral("id")); // Importing GeoJson "id" member from the QVariantMap
+    if (variantValue != QVariant::Invalid) {
+        key = QStringLiteral("id");
+        parsedFeature.insert(key, variantValue);
     }
-    multiPosition = exportLineStringCoordinates(obtainedCoordinatesMP);
-
-    parsedMultiPoint.insert(keyType, typeValue);
-    parsedMultiPoint.insert(keyCoord, multiPosition);
-    return parsedMultiPoint;
+    return parsedFeature;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportMultiLineString(const QVariantMap &multiLineStringMap)
+static QVariantList importFeatureCollection(const QVariantMap &featureCollection)
 {
-    const QString keyType = "type";
-    const QString keyCoord = "coordinates";
+    QVariantList parsedFeatureCollection;
+    QString keyFeatures = QStringLiteral("features");
+    QVariant featureVariant = featureCollection.value(keyFeatures);
+    QVariantList featureVariantList = featureVariant.value<QVariantList>();
+    QString keyFeature = QStringLiteral("Feature");
 
-    QJsonObject parsedMultiLineString;
-
-    QJsonValue typeValue = "MultiLineString";
-
-    QList<QList<QGeoCoordinate>> obtainedCoordinatesMLS;
-    QVariant multiPathVariant = multiLineStringMap.value(typeValue.toString());
-    QVariantList multiPathList = multiPathVariant.value<QVariantList>();
-
-    for (const QVariant &singlePath: multiPathList ){
-        obtainedCoordinatesMLS << singlePath.value<QGeoPath>().path();
+    QVariantMap importedMap;
+    for (const QVariant &singleVariantFeature: featureVariantList) {
+        QVariantMap featureMap = singleVariantFeature.value<QVariantMap>();
+        QVariantMap featMap = importFeature(featureMap);
+        importedMap.insert(keyFeature,featMap);
+        parsedFeatureCollection.append(importedMap);
     }
-
-    parsedMultiLineString.insert(keyType, typeValue);
-    parsedMultiLineString.insert(keyCoord, exportPolygonCoordinates(obtainedCoordinatesMLS));
-    return parsedMultiLineString;
+    return parsedFeatureCollection;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportMultiPolygon(const QVariantMap &multiPolygonMap)
-{
-    const QString keyType = "type";
-    const QString keyCoord = "coordinates";
-
-    QJsonObject parsedMultiPolygon;
-
-    QJsonValue typeValue = "MultiPolygon";
-    QJsonValue polyCoordinates;
-
-    QJsonArray parsedArrayPolygon;
-    QList<QList<QGeoCoordinate>> obtainedPolyCoordinates;
-
-    QVariant multiPolygonVariant = multiPolygonMap.value(typeValue.toString());
-    QVariantList multiPolygonList = multiPolygonVariant.value<QVariantList>();
-
-    int polyHoles=0;
-    int currentHole;
-
-    for (const QVariant &singlePoly: multiPolygonList ) { //start parsing polygon list
-        obtainedPolyCoordinates << singlePoly.value<QGeoPolygon>().path(); //extract external polygon path
-        polyHoles = singlePoly.value<QGeoPolygon>().holesCount();
-        if (polyHoles) //check if the polygon has holes
-            for (currentHole = 0 ; currentHole<polyHoles; currentHole++)
-                obtainedPolyCoordinates << singlePoly.value<QGeoPolygon>().holePath(currentHole);
-        polyCoordinates = exportPolygonCoordinates(obtainedPolyCoordinates); //generates QJsonDocument compatible value
-        parsedArrayPolygon.append(polyCoordinates); //adds one level of nesting in coordinates
-        obtainedPolyCoordinates.clear(); //clears the temporary polygon linear ring storage
-    }
-    QJsonValue parsed = parsedArrayPolygon;
-
-    parsedMultiPolygon.insert(keyType, typeValue);
-    parsedMultiPolygon.insert(keyCoord, parsed);
-    return parsedMultiPolygon;
-}
-
-/*!
-    \internal
- */
-QJsonValue QGeoJson::exportPointCoordinates(const QGeoCoordinate &obtainedCoordinates)
+static QJsonValue exportPointCoordinates(const QGeoCoordinate &obtainedCoordinates)
 {
     QJsonValue geoLat = obtainedCoordinates.latitude();
     QJsonValue geoLong = obtainedCoordinates.longitude();
@@ -641,10 +420,7 @@ QJsonValue QGeoJson::exportPointCoordinates(const QGeoCoordinate &obtainedCoordi
     return geoArray;
 }
 
-/*!
-    \internal
- */
-QJsonValue QGeoJson::exportLineStringCoordinates(const QList<QGeoCoordinate> &obtainedCoordinatesList)
+static QJsonValue exportLineStringCoordinates(const QList<QGeoCoordinate> &obtainedCoordinatesList)
 {
     QJsonValue lineCoordinates;
     QJsonValue multiPosition;
@@ -658,56 +434,241 @@ QJsonValue QGeoJson::exportLineStringCoordinates(const QList<QGeoCoordinate> &ob
     return lineCoordinates;
 }
 
-/*!
-    \internal
- */
-QJsonValue QGeoJson::exportPolygonCoordinates(const QList<QList<QGeoCoordinate>> &obtainedCoordinates)
+static QJsonValue exportPolygonCoordinates(const QList<QList<QGeoCoordinate>> &obtainedCoordinates)
 {
     QJsonValue lineCoordinates;
     QJsonValue polyCoordinates;
     QJsonArray arrayPath;
     for (const QList<QGeoCoordinate> &parsedPath: obtainedCoordinates) {
-        lineCoordinates = exportLineStringCoordinates(parsedPath); //method to extract an array of QGeoCoordinate from a nested GeoJSON array
+        lineCoordinates = exportLineStringCoordinates(parsedPath);
         arrayPath.append(lineCoordinates);
     }
     polyCoordinates = arrayPath;
     return polyCoordinates;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportGeometry(const QVariantMap &geometryMap)
+static QJsonObject exportPoint(const QVariantMap &pointMap)
+{
+    QJsonObject parsedPoint;
+
+    QString keyType = QStringLiteral("type");
+    QString keyCoord = QStringLiteral("coordinates");
+    QString valuePoint = QStringLiteral("Point");
+
+    QVariant geoCircle = pointMap.value(valuePoint); // exporting the value of "Point" QVariantMap node in a QVariant
+    QGeoCircle circle = geoCircle.value<QGeoCircle>();
+    QGeoCoordinate center = circle.center();
+    QJsonValue valueType = valuePoint;
+
+    parsedPoint.insert(keyType,valueType);
+    parsedPoint.insert(keyCoord, exportPointCoordinates(center));
+    return parsedPoint;
+}
+
+static QJsonObject exportLineString(const QVariantMap &lineStringMap)
+{
+    QJsonObject parsedMultiPoint;
+
+    QString keyType = QStringLiteral("type");
+    QString keyCoord = QStringLiteral("coordinates");
+
+    QString valueLineString = QStringLiteral("LineString");
+
+    QJsonValue lineCoordinates;
+
+    QList <QGeoCoordinate> lineCoordinatesList;
+    QVariant pathVariant = lineStringMap.value(valueLineString);
+    QJsonValue valueType = valueLineString;
+
+    QGeoPath parsedPath;
+    parsedPath = pathVariant.value<QGeoPath>();
+
+    lineCoordinatesList = parsedPath.path();
+    lineCoordinates = exportLineStringCoordinates(lineCoordinatesList);
+
+    parsedMultiPoint.insert(keyType, valueType);
+    parsedMultiPoint.insert(keyCoord, lineCoordinates);
+    return parsedMultiPoint;
+}
+
+static QJsonObject exportPolygon(const QVariantMap &polygonMap)
+{
+    QJsonObject parsedPolygon;
+
+    QString keyType = QStringLiteral("type");
+
+    QString keyCoord = QStringLiteral("coordinates");
+
+    QString valuePolygon = QStringLiteral("Polygon");
+    QJsonValue polyCoordinates;
+
+    QGeoPolygon parsedPoly;
+
+    QList<QList<QGeoCoordinate>> obtainedCoordinatesPoly;
+    QVariant polygonVariant = polygonMap.value(valuePolygon);
+
+    QJsonValue valueType = valuePolygon;
+
+    parsedPoly = polygonVariant.value<QGeoPolygon>();
+    obtainedCoordinatesPoly << parsedPoly.path();
+
+    if (parsedPoly.holesCount()!=0)
+        for (int i = 0; i<parsedPoly.holesCount(); i++) {
+            obtainedCoordinatesPoly << parsedPoly.holePath(i);
+        }
+    polyCoordinates = exportPolygonCoordinates(obtainedCoordinatesPoly);
+    qDebug() << " 8: " << parsedPolygon;
+    parsedPolygon.insert(keyType, valueType);
+    qDebug() << " 9: " << parsedPolygon;
+    parsedPolygon.insert(keyCoord, polyCoordinates);
+    qDebug() << " 10: " << parsedPolygon;
+    return parsedPolygon;
+}
+
+static QJsonObject exportMultiPoint(const QVariantMap &multiPointMap)
+{
+    QJsonObject parsedMultiPoint;
+
+    QString keyType = QStringLiteral("type");
+    QString keyCoord = QStringLiteral("coordinates");
+
+    QString valueMultiPoint = QStringLiteral("MultiPoint");
+
+    QJsonValue multiPosition;
+
+    QList <QGeoCoordinate> obtainedCoordinatesMP;
+    QVariant multiCircleVariant = multiPointMap.value(valueMultiPoint);
+    QVariantList multiCircleVariantList = multiCircleVariant.value<QVariantList>();
+    QJsonValue typeValue = valueMultiPoint;
+
+    for (const QVariant &exCircle: multiCircleVariantList) {
+        obtainedCoordinatesMP << exCircle.value<QGeoCircle>().center();
+    }
+    multiPosition = exportLineStringCoordinates(obtainedCoordinatesMP);
+
+    parsedMultiPoint.insert(keyType, typeValue);
+    parsedMultiPoint.insert(keyCoord, multiPosition);
+    return parsedMultiPoint;
+}
+
+static QJsonObject exportMultiLineString(const QVariantMap &multiLineStringMap)
+{
+    QJsonObject parsedMultiLineString;
+
+    QString keyType = QStringLiteral("type");
+    QString keyCoord = QStringLiteral("coordinates");
+    QString valueMultiLineString = QStringLiteral("MultiLineString");
+
+    QList<QList<QGeoCoordinate>> obtainedCoordinatesMLS;
+    QVariant multiPathVariant = multiLineStringMap.value(valueMultiLineString);
+    QVariantList multiPathList = multiPathVariant.value<QVariantList>();
+    QJsonValue typeValue = valueMultiLineString;
+
+    for (const QVariant &singlePath: multiPathList ){
+        obtainedCoordinatesMLS << singlePath.value<QGeoPath>().path();
+    }
+
+    parsedMultiLineString.insert(keyType, typeValue);
+    parsedMultiLineString.insert(keyCoord, exportPolygonCoordinates(obtainedCoordinatesMLS));
+    return parsedMultiLineString;
+}
+
+static QJsonObject exportMultiPolygon(const QVariantMap &multiPolygonMap)
+{
+    QJsonObject parsedMultiPolygon;
+
+    QString keyType = QStringLiteral("type");
+    QString keyCoord = QStringLiteral("coordinates");
+    QString valueMultiPolygon = QStringLiteral("MultiPolygon");
+
+    QJsonValue polyCoordinates;
+
+    QJsonArray parsedArrayPolygon;
+    QList<QList<QGeoCoordinate>> obtainedPolyCoordinates;
+
+    QVariant multiPolygonVariant = multiPolygonMap.value(valueMultiPolygon);
+    QVariantList multiPolygonList = multiPolygonVariant.value<QVariantList>();
+
+    QJsonValue typeValue = valueMultiPolygon;
+    int polyHoles = 0;
+    int currentHole;
+
+    for (const QVariant &singlePoly: multiPolygonList ) { // Start parsing èolygon list
+        obtainedPolyCoordinates << singlePoly.value<QGeoPolygon>().path(); // Extract external polygon path
+        polyHoles = singlePoly.value<QGeoPolygon>().holesCount();
+
+        if (polyHoles) //Check if the polygon has holes
+            for (currentHole = 0 ; currentHole<polyHoles; currentHole++)
+                obtainedPolyCoordinates << singlePoly.value<QGeoPolygon>().holePath(currentHole);
+        polyCoordinates = exportPolygonCoordinates(obtainedPolyCoordinates); //Generates QJsonDocument compatible value
+        parsedArrayPolygon.append(polyCoordinates); // Adds one level of nesting in coordinates
+        obtainedPolyCoordinates.clear(); // Clears the temporary polygon linear ring storage
+    }
+    QJsonValue parsed = parsedArrayPolygon;
+
+    parsedMultiPolygon.insert(keyType, typeValue);
+    parsedMultiPolygon.insert(keyCoord, parsed);
+    return parsedMultiPolygon;
+}
+
+static QJsonObject exportGeometry(const QVariantMap &geometryMap);
+
+static QJsonObject exportGeometryCollection(const QVariantMap &geometryCollection)
+{
+    QString keyType = QStringLiteral("type");
+    QString keyGeometries = QStringLiteral("geometries");
+    QString valueGeometryCollection = QStringLiteral("GeometryCollection");
+
+    QJsonObject parsed;
+    QJsonObject parsedGeometry;
+    QVariantList geometriesList;
+
+    QJsonValue valueGeometries;
+    QJsonArray parsedGeometries;
+
+    geometriesList = geometryCollection.value(valueGeometryCollection).value<QVariantList>();
+    for (const QVariant &extractedGeometry: geometriesList){
+        parsedGeometry = exportGeometry(extractedGeometry.value<QVariantMap>());
+        valueGeometries = parsedGeometry;
+        parsedGeometries.append(valueGeometries);
+    }
+    valueGeometries = parsedGeometries;
+    QJsonValue valueType = valueGeometryCollection;
+
+    parsed.insert(keyType, valueType);
+    parsed.insert(keyGeometries, valueGeometries);
+    return parsed;
+}
+
+static QJsonObject exportGeometry(const QVariantMap &geometryMap)
 {
     QJsonObject newObject;
     QJsonDocument newDocument;
-    if (geometryMap.contains("Point")) // check if the map contains the key Point
+    if (geometryMap.contains(QStringLiteral("Point"))) // check if the map contains the key Point
         newObject = exportPoint(geometryMap);
-    if (geometryMap.contains("MultiPoint")) // check if the map contains the key MultiPoint
+    if (geometryMap.contains(QStringLiteral("MultiPoint"))) // check if the map contains the key MultiPoint
         newObject = exportMultiPoint(geometryMap);
-    if (geometryMap.contains("LineString"))
+    if (geometryMap.contains(QStringLiteral("LineString")))
         newObject = exportLineString(geometryMap);
-    if (geometryMap.contains("MultiLineString"))
+    if (geometryMap.contains(QStringLiteral("MultiLineString")))
         newObject = exportMultiLineString(geometryMap);
         newDocument.setObject(newObject);
-    if (geometryMap.contains("Polygon"))
+    if (geometryMap.contains(QStringLiteral("Polygon")))
         newObject = exportPolygon(geometryMap);
-    if (geometryMap.contains("MultiPolygon"))
+    if (geometryMap.contains(QStringLiteral("MultiPolygon")))
         newObject = exportMultiPolygon(geometryMap);
-    if (geometryMap.contains("GeometryCollection"))
+    if (geometryMap.contains(QStringLiteral("GeometryCollection")))
         newObject = exportGeometryCollection(geometryMap);
     return newObject;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportFeature(const QVariantMap &feature)
+static QJsonObject exportFeature(const QVariantMap &feature)
 {
-    const QString keyType = "type";
-    const QString keyFeature = "geometry";
-    const QString keyProp = "properties";
-    const QString keyId = "id";
+    QString keyType = QStringLiteral("type");
+    QString keyFeature = QStringLiteral("geometry");
+    QString keyProp = QStringLiteral("properties");
+    QString keyId = QStringLiteral("id");
+    QString valueFeat = QStringLiteral("Feature");
 
     QJsonObject parsedFeature;
     QJsonObject exportedFeature;
@@ -717,12 +678,12 @@ QJsonObject QGeoJson::exportFeature(const QVariantMap &feature)
     QVariantMap featureMap;
     QVariantMap feat;
 
-    QJsonValue valueType = "Feature";
     QJsonValue valueFeature;
     QJsonValue valueProperties;
     QJsonValue valueId;
 
-    featureMap = feature.value(valueType.toString()).value<QVariantMap>();
+    featureMap = feature.value(valueFeat).value<QVariantMap>();
+    QJsonValue valueType = valueFeat;
     feat = featureMap.value(keyFeature).value<QVariantMap>();
     exportedFeature = exportGeometry(feat);
     valueFeature = exportedFeature;
@@ -741,42 +702,11 @@ QJsonObject QGeoJson::exportFeature(const QVariantMap &feature)
     return parsedFeature;
 }
 
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportGeometryCollection(const QVariantMap &geometryCollection)
+static QJsonObject exportFeatureCollection(const QVariantMap &featureCollection)
 {
-    const QString keyType = "type";
-    const QString keyGeometries = "geometries";
-
-    QJsonObject parsed;
-    QJsonObject parsedGeometry;
-    QVariantList geometriesList;
-
-    QJsonValue valueType = "GeometryCollection";
-    QJsonValue valueGeometries;
-    QJsonArray parsedGeometries;
-
-    geometriesList = geometryCollection.value(valueType.toString()).value<QVariantList>();
-    for (const QVariant &extractedGeometry: geometriesList){
-        parsedGeometry = exportGeometry(extractedGeometry.value<QVariantMap>());
-        valueGeometries = parsedGeometry;
-        parsedGeometries.append(valueGeometries);
-    }
-    valueGeometries = parsedGeometries;
-
-    parsed.insert(keyType, valueType);
-    parsed.insert(keyGeometries, valueGeometries);
-    return parsed;
-}
-
-/*!
-    \internal
- */
-QJsonObject QGeoJson::exportFeatureCollection(const QVariantMap &featureCollection)
-{
-    const QString keyType = "type";
-    const QString keyFeature = "features";
+    QString keyType = QStringLiteral("type");
+    QString keyFeature = QStringLiteral("features");
+    QString valueFeat = QStringLiteral("FeatureCollection");
 
     QJsonObject parsedFeatureCollection;
     QJsonObject exportedFeature;
@@ -784,12 +714,16 @@ QJsonObject QGeoJson::exportFeatureCollection(const QVariantMap &featureCollecti
     QVariantMap featureMap;
     QVariantMap featfeat;
 
-    QJsonValue valueType = "FeatureCollection";
-    QJsonValue valueFeature;
+    QJsonValue valueType;
     QJsonArray array;
 
-    QVariant extractedFeatureVariant = featureCollection.value("FeatureCollection");
+    QVariant extractedFeatureVariant = featureCollection.value(valueFeat);
     QVariantList extractedFeaturVariantList = extractedFeatureVariant.value<QVariantList>();
+    qDebug() << " 11: " << valueFeat;
+    QJsonValue valueFeature = valueFeat;
+
+
+
     for (const QVariant &singleVariantFeature: extractedFeaturVariantList) {
             featureMap = singleVariantFeature.value<QVariantMap>();
             exportedFeature = exportFeature(featureMap);
@@ -797,30 +731,30 @@ QJsonObject QGeoJson::exportFeatureCollection(const QVariantMap &featureCollecti
             array.append(valueFeature);
     }
     valueFeature = array;
-
-    parsedFeatureCollection.insert(keyType, valueType);
+         qDebug() << " 13: " << keyType;
+                  qDebug() << " 14: " << valueType;
+    parsedFeatureCollection.insert(keyType, valueFeat);
+         qDebug() << " 12: " << parsedFeatureCollection;
     parsedFeatureCollection.insert(keyFeature, valueFeature);
     return parsedFeatureCollection;
 }
 
-/*!
-
-*/
 QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
 {
     QJsonObject object = importDoc.object(); // Read json object from imported doc
     QVariantMap standardMap = object.toVariantMap(); // extraced map using Qt's API
+    qDebug() << " 2: " << standardMap;
 
     QString geoType[] = {
-        "Point",
-        "MultiPoint",
-        "LineString",
-        "MultiLineString",
-        "Polygon",
-        "MultiPolygon",
-        "GeometryCollection",
-        "Feature",
-        "FeatureCollection"
+        QStringLiteral("Point"),
+        QStringLiteral("MultiPoint"),
+        QStringLiteral("LineString"),
+        QStringLiteral("MultiLineString"),
+        QStringLiteral("Polygon"),
+        QStringLiteral("MultiPolygon"),
+        QStringLiteral("GeometryCollection"),
+        QStringLiteral("Feature"),
+        QStringLiteral("FeatureCollection")
     };
 
     enum geoTypeSwitch {
@@ -836,12 +770,15 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     };
 
     // Checking wether the JSON object has a "type" member
-    QVariant typekey = standardMap.value("type");
-    if (typekey == QVariant::Invalid) {
-        // qDebug() << " [x] Type check failed - Invalid GeoJSON document: no \"type\" key in the object.\n";
-    }
 
-    QString typevalue = typekey.toString();
+    QString keyType = QStringLiteral("type");
+
+    QVariant keyVariant = standardMap.value(keyType);
+    qDebug() << " 3: " << keyVariant;
+        if (keyVariant == QVariant::Invalid) {
+             // [x] Type check failed
+        }
+    QString valueType = keyVariant.value<QString>();
     int len = sizeof(geoType)/sizeof(*geoType);
 
     int i = 0; // index of the iteration where the value of type has been veryfied
@@ -849,16 +786,18 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     // Checking whether the "type" member has a GeoJSON admitted value
 
     for (i=0; i<len-1; i++) {
-        if (typevalue == geoType[i]) // [v] Type check passed
+        qDebug() << " 3a-" << i << geoType[i];
+        qDebug() << " 3b-" << i << valueType;
+        if (valueType == geoType[i])
             break;
-        else if (i==len-1) {} // [x] Type check failed
+        else if (i==len-1) {}
     }
 
     QVariantMap parsedGeoJsonMap;
     switch (i) {
     case Point:
     {
-        const QString keyMap = "Point";
+        QString keyMap = QStringLiteral("Point");
         QGeoCircle circle = importPoint(standardMap);
         QVariant valueMap = QVariant::fromValue(circle);
 
@@ -867,17 +806,17 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case MultiPoint:
     {
-        const QString keyMap = "MultiPoint"; // creating the key for the first element of the QVariantMap that will be returned
+        QString keyMap = QStringLiteral("MultiPoint"); // creating the key for the first element of the QVariantMap that will be returned
         QVariantList multiCircle = importMultiPoint(standardMap);
         QVariant valueMap = QVariant::fromValue(multiCircle); // wraps up the multiCircle item in a QVariant
         QList <QGeoCircle> testlist;
 
-        parsedGeoJsonMap.insert(keyMap, valueMap); // creating the QVariantMap element
+        parsedGeoJsonMap.insert(keyMap, valueMap);
         break;
     }
     case LineString:
     {
-        const QString keyMap = "LineString";
+        QString keyMap = QStringLiteral("LineString");
         QGeoPath lineString = importLineString(standardMap);
         QVariant valueMap = QVariant::fromValue(lineString);
 
@@ -886,7 +825,7 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case MultiLineString:
     {
-        const QString keyMap = "MultiLineString";
+        QString keyMap = QStringLiteral("MultiLineString");
         QVariantList multiLineString = importMultiLineString(standardMap);
         QVariant valueMap = QVariant::fromValue(multiLineString);
 
@@ -895,16 +834,17 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case Polygon:
     {
-        const QString keyMap = "Polygon";
+        QString keyMap = QStringLiteral("Polygon");
         QGeoPolygon poly = importPolygon(standardMap);
         QVariant valueMap = QVariant::fromValue(poly);
-
+        qDebug() << "4:" << parsedGeoJsonMap;
         parsedGeoJsonMap.insert(keyMap, valueMap);
+
         break;
     }
     case MultiPolygon:
     {
-        const QString keyMap = "MultiPolygon";
+        QString keyMap = QStringLiteral("MultiPolygon");
         QVariantList multiPoly = importMultiPolygon(standardMap);
         QVariant valueMap = QVariant::fromValue(multiPoly);
 
@@ -913,7 +853,7 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case GeometryCollection: // list of GeoJson geometry objects
     {
-        const QString keyMap = "GeometryCollection";
+        QString keyMap = QStringLiteral("GeometryCollection");
         QVariantList multiGeo = importGeometryCollection(standardMap);
         QVariant valueMap = QVariant::fromValue(multiGeo);
 
@@ -922,7 +862,7 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case Feature: // single GeoJson geometry object with properties
     {
-        const QString keyMap = "Feature";
+        QString keyMap = QStringLiteral("Feature");
         QVariantMap feat = importFeature(standardMap);
         QVariant valueMap = QVariant::fromValue(feat);
 
@@ -931,50 +871,51 @@ QVariantMap QGeoJson::importGeoJson(const QJsonDocument &importDoc)
     }
     case FeatureCollection: // heterogeneous list of GeoJSON geometries with properties
     {
-        const QString keyMap = "FeatureCollection";
+        QString keyMap = QStringLiteral("FeatureCollection");
         QVariantList featCollection = importFeatureCollection(standardMap);
         QVariant valueMap = QVariant::fromValue(featCollection);
 
         parsedGeoJsonMap.insert(keyMap, valueMap);
         break;
     }
-    default: // standardMap.value("type") It's not a valid value
     }
 
     // searching for the bbox member, if found, copy it to the output QVariantMap
-    const QString keyMap = "bbox";
-    QVariant valueMap = standardMap.value("bbox");
+    QString keyMap = QStringLiteral("bbox");
+    QVariant bboxValue = standardMap.value(keyMap);
     if (bboxValue != QVariant::Invalid) {
         parsedGeoJsonMap.insert(keyMap, bboxValue);
     }
     return parsedGeoJsonMap;
 }
 
-/*!
-
-*/
 QJsonDocument QGeoJson::exportGeoJson(const QVariantMap &exportMap)
 {
+    qDebug() << " 5: " << exportMap;
     QJsonObject newObject;
     QJsonDocument newDocument;
-    if (exportMap.contains("Point")) // check if the map contains the key Point
+    if (exportMap.contains(QStringLiteral("Point"))) // check if the map contains the key Point
         newObject = exportPoint(exportMap);
-    if (exportMap.contains("MultiPoint"))
+    if (exportMap.contains(QStringLiteral("MultiPoint")))
         newObject = exportMultiPoint(exportMap);
-    if (exportMap.contains("LineString"))
+    if (exportMap.contains(QStringLiteral("LineString")))
         newObject = exportLineString(exportMap);
-    if (exportMap.contains("MultiLineString"))
+    if (exportMap.contains(QStringLiteral("MultiLineString")))
         newObject = exportMultiLineString(exportMap);
-    if (exportMap.contains("Polygon"))
+    if (exportMap.contains(QStringLiteral("Polygon"))){
+        qDebug() << " 6: " << exportMap;
         newObject = exportPolygon(exportMap);
-    if (exportMap.contains("MultiPolygon"))
+            qDebug() << " 7: " << newObject;}
+    if (exportMap.contains(QStringLiteral("MultiPolygon")))
         newObject = exportMultiPolygon(exportMap);
-    if (exportMap.contains("GeometryCollection"))
+    if (exportMap.contains(QStringLiteral("GeometryCollection")))
         newObject = exportGeometry(exportMap);
-    if (exportMap.contains("Feature"))
+    if (exportMap.contains(QStringLiteral("Feature")))
         newObject = exportFeature(exportMap);
-    if (exportMap.contains("FeatureCollection"))
+    if (exportMap.contains(QStringLiteral("FeatureCollection")))
         newObject = exportFeatureCollection(exportMap);
     newDocument.setObject(newObject);
     return newDocument;
 }
+
+QT_END_NAMESPACE
